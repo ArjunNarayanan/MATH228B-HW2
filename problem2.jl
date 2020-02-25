@@ -418,8 +418,8 @@ yT = yc
 
 sol0 = [initial_condition(xr,gamma,xc,yc) for xr in xrange]
 sol = [run_steps(sol0[i],gamma,Nx[i],dx[i],dt_nsteps[i][1],alpha,dt_nsteps[i][2]) for i in 1:3]
-exact = initial_condition(xrange,gamma,xT,yT)
-err = solution_error_infinity_norm(sol,exact)
+exact = [initial_condition(xr,gamma,xT,yT) for xr in xrange]
+err = [solution_error_infinity_norm(sol[i],exact[i]) for i = 1:3]
 
 # xxs = [x for x in xrange for y in xrange]
 # yys = [y for x in xrange for y in xrange]
