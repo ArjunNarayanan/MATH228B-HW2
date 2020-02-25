@@ -344,7 +344,7 @@ function total_energy(p,rho,u,v,gamma)
     return 1.0/(gamma-1.0)*p + 0.5*rho .* (u.^2 + v.^2)
 end
 
-function initial_condition(xrange,gamma;b=0.5,xc=5.0,yc=5.0,uInf=0.1,vInf=0.0)
+function initial_condition(xrange,gamma,xc,yc;b=0.5,uInf=0.1,vInf=0.0)
     N = length(xrange)
     ndofs = N^2
     density = zeros(ndofs)
@@ -380,6 +380,15 @@ function initial_condition(xrange,gamma;b=0.5,xc=5.0,yc=5.0,uInf=0.1,vInf=0.0)
     return sol
 end
 
+function solution_error_infinity_norm(sol::Matrix,exact::Matrix)
+    difference = sol - exact
+    e1 = maximum(abs.(difference[1,:]))
+    e2 = maximum(abs.(difference[2,:]))
+    e3 = maximum(abs.(difference[3,:]))
+    e4 = maximum(abs.(difference[4,:]))
+    return [e1,e2,e3,e4]
+end
+
 function plot_velocity_field(sol,Nx,xrange)
     xxs = [x for x in xrange for y in xrange]
     yys = [y for x in xrange for y in xrange]
@@ -398,30 +407,24 @@ xc=5.0
 yc=5.0
 uInf=0.1
 vInf=0.0
-N = 32
-Nx = N+1
-dx = 10.0/N
-dt,nsteps = time_step_size(final_time,dx)
-xrange = range(0.0, stop = 10.0, length = Nx)
+N = [32,64,128]
+Nx = [i+1 for i in N]
+dx = 10.0 ./ N
+dt_nsteps = [time_step_size(final_time,h) for h in dx]
+xrange = [range(0.0, stop = 10.0, length = i) for i in Nx]
 
 xT = xc + final_time*uInf
 yT = yc
 
-sol0 = initial_condition(xrange,gamma)
-p0 = pressure(sol0,gamma)
+sol0 = [initial_condition(xr,gamma,xc,yc) for xr in xrange]
+sol = [run_steps(sol0[i],gamma,Nx[i],dx[i],dt_nsteps[i][1],alpha,dt_nsteps[i][2]) for i in 1:3]
+exact = initial_condition(xrange,gamma,xT,yT)
+err = solution_error_infinity_norm(sol,exact)
 
-Ax = pade_dx_matrix(Nx)
-Ay = pade_dy_matrix(Nx)
-Rx = filter_dx_matrix(Nx,alpha)
-Ry = filter_dy_matrix(Nx,alpha)
-
-sol = run_steps(sol0,gamma,Nx,dx,dt,alpha,nsteps)
-p = pressure(sol,gamma)
-
-xxs = [x for x in xrange for y in xrange]
-yys = [y for x in xrange for y in xrange]
-X = reshape(xxs,Nx,Nx)
-Y = reshape(yys,Nx,Nx)
-fig, ax = PyPlot.subplots()
-ax.contour(X,Y,reshape(sol[1,:],Nx,Nx))
-fig
+# xxs = [x for x in xrange for y in xrange]
+# yys = [y for x in xrange for y in xrange]
+# X = reshape(xxs,Nx,Nx)
+# Y = reshape(yys,Nx,Nx)
+# fig, ax = PyPlot.subplots()
+# ax.contour(X,Y,reshape(sol[1,:],Nx,Nx))
+# fig
