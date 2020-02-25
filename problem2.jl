@@ -1,7 +1,17 @@
-using LinearAlgebra, SparseArrays, BenchmarkTools, Plots
+using LinearAlgebra, SparseArrays, BenchmarkTools
+using PyPlot
 
 function pressure(sol::Vector,gamma)
     return (gamma-1.0)*(sol[4] - 0.5*(sol[2]^2+sol[3]^2)/sol[1])
+end
+
+function pressure(sol::Matrix,gamma)
+    ndofs = size(sol)[2]
+    p = zeros(ndofs)
+    for i in 1:ndofs
+        p[i] = pressure(sol[:,i],gamma)
+    end
+    return p
 end
 
 function flux(sol::Vector,gamma)
@@ -30,9 +40,9 @@ function flux(sol::Matrix,gamma)
         F1[:,i] = F[1,:]
         F2[:,i] = F[2,:]
         F3[:,i] = F[3,:]
-        F4[:,i] = F[4,i]
+        F4[:,i] = F[4,:]
     end
-    return F
+    return F1,F2,F3,F4
 end
 
 function index_to_DOF(i::Int,j::Int,N::Int)
@@ -153,6 +163,15 @@ function compact_divergence(Fx::Vector,Fy::Vector,Ax::SparseMatrixCSC,Ay::Sparse
     return (Ax\rx + Ay\ry)
 end
 
+function euler_rhs(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,N::Int,h::Float64)
+    F1,F2,F3,F4 = flux(sol,gamma)
+    DF1 = -1.0*compact_divergence(F1[1,:],F1[2,:],Ax,Ay,N,h)
+    DF2 = -1.0*compact_divergence(F2[1,:],F2[2,:],Ax,Ay,N,h)
+    DF3 = -1.0*compact_divergence(F3[1,:],F3[2,:],Ax,Ay,N,h)
+    DF4 = -1.0*compact_divergence(F4[1,:],F4[2,:],Ax,Ay,N,h)
+    return vcat(DF1',DF2',DF3',DF4')
+end
+
 function filter_dx_matrix(N::Int,alpha::Float64)
     I = Int[]
     J = Int[]
@@ -252,26 +271,157 @@ function filter_dy_rhs(vals::Vector,N::Int,alpha::Float64)
     return rhs
 end
 
+function compact_filter(F::Vector,Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int,alpha::Float64)
+    rx = filter_dx_rhs(F,N,alpha)
+    Fx = Rx\rx
+    ry = filter_dy_rhs(Fx,N,alpha)
+    Fy = Ry\ry
+    return Fy
+end
 
+function filter_solution(sol::Matrix,Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int,alpha::Float64)
+    row1 = compact_filter(sol[1,:],Rx,Ry,N,alpha)
+    row2 = compact_filter(sol[2,:],Rx,Ry,N,alpha)
+    row3 = compact_filter(sol[3,:],Rx,Ry,N,alpha)
+    row4 = compact_filter(sol[4,:],Rx,Ry,N,alpha)
+    return vcat(row1',row2',row3',row4')
+end
 
-P(x,y) = sin(10pi*x) + cos(2pi*y)
+function stepRK4(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,N::Int,dx::Float64,dt::Float64)
+    k1 = euler_rhs(sol,gamma,Ax,Ay,N,dx)
+    k2 = euler_rhs(sol+0.5*dt*k1,gamma,Ax,Ay,N,dx)
+    k3 = euler_rhs(sol+0.5*dt*k2,gamma,Ax,Ay,N,dx)
+    k4 = euler_rhs(sol+dt*k3,gamma,Ax,Ay,N,dx)
+    return sol+dt/6.0*(k1+k2+k3+k4)
+end
 
-h = 0.01
-xrange = 0.0:h:1.0
-N = length(xrange)
+function step_and_filter(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,
+        Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int,dx::Float64,dt::Float64,alpha::Float64)
 
-vals = [P(x,y) for y in xrange for x in xrange]
+    next_step = stepRK4(sol,gamma,Ax,Ay,N,dx,dt)
+    filtered_next_step = filter_solution(next_step,Rx,Ry,N,alpha)
+    return filtered_next_step
+end
 
-alpha = 0.48
-A = filter_dy_matrix(N,alpha)
-f = filter_dy_rhs(vals,N,alpha)
-vy = A\f
-A = filter_dx_matrix(N,alpha)
-f = filter_dx_rhs(vals,N,alpha)
-vx = A\f
+function run_steps(sol0,gamma,N,dx,dt,alpha,nsteps)
+    Ax = pade_dx_matrix(N)
+    Ay = pade_dy_matrix(N)
+    Rx = filter_dx_matrix(N,alpha)
+    Ry = filter_dy_matrix(N,alpha)
 
-println("Diff vx = ", norm(vals-vx))
-println("Diff vy = ", norm(vals-vy))
+    sol = copy(sol0)
+    for i = 1:nsteps
+        sol = step_and_filter(sol,gamma,Ax,Ay,Rx,Ry,N,dx,dt,alpha)
+    end
+    return sol
+end
 
-# contour(xrange, xrange, reshape(vals,N,N), lw = 3)
-# contour(xrange, xrange, reshape(vx,N,N), lw = 3)
+function time_step_size(final_time::Float64,dx::Float64;step_factor=0.3)
+    nsteps = 2
+    dt = final_time/nsteps
+    while dt > step_factor*dx
+        nsteps *= 2
+        dt = final_time/nsteps
+    end
+    return dt, nsteps
+end
+
+function initial_velocity(uInf,vInf,r,x,y,xc,yc,b)
+    u = uInf - b/(2pi)*exp(0.5*(1.0-r^2))*(y-yc)
+    v = vInf + b/(2pi)*exp(0.5*(1.0-r^2))*(x-xc)
+    return u,v
+end
+
+function initial_density(gamma,r,b)
+    return (1.0 - (gamma - 1.0)*b^2/(8*gamma*pi^2)*exp(1.0-r^2))^(1.0/(gamma-1.0))
+end
+
+function initial_pressure(rho,gamma)
+    return rho^gamma
+end
+
+function total_energy(p,rho,u,v,gamma)
+    return 1.0/(gamma-1.0)*p + 0.5*rho .* (u.^2 + v.^2)
+end
+
+function initial_condition(xrange,gamma;b=0.5,xc=5.0,yc=5.0,uInf=0.1,vInf=0.0)
+    N = length(xrange)
+    ndofs = N^2
+    density = zeros(ndofs)
+    xVelocity = zeros(ndofs)
+    yVelocity = zeros(ndofs)
+    press = zeros(ndofs)
+
+    count = 1
+    for j in 1:N
+        y = xrange[j]
+        for i in 1:N
+            x = xrange[i]
+            r = sqrt((x-xc)^2 + (y-yc)^2)
+
+            rho = initial_density(gamma,r,b)
+            p = initial_pressure(rho,gamma)
+            u,v = initial_velocity(uInf,vInf,r,x,y,xc,yc,b)
+
+            density[count] = rho
+            xVelocity[count] = u
+            yVelocity[count] = v
+            press[count] = p
+
+            count += 1
+        end
+    end
+    sol = zeros(4,ndofs)
+    sol[1,:] = density
+    sol[2,:] = density .* xVelocity
+    sol[3,:] = density .* yVelocity
+    sol[4,:] = total_energy(press,density,xVelocity,yVelocity,gamma)
+
+    return sol
+end
+
+function plot_velocity_field(sol,Nx,xrange)
+    xxs = [x for x in xrange for y in xrange]
+    yys = [y for x in xrange for y in xrange]
+    fig, ax = PyPlot.subplots()
+    U = reshape(sol[2,:], Nx, Nx)
+    V = reshape(sol[3,:], Nx, Nx)
+    ax.quiver(xxs,yys,U,V)
+    # ax.scatter([xT],[yT],s=50,color="r")
+    return fig
+end
+
+const gamma = 7.0/5.0
+const alpha = 0.499
+const final_time = 5*sqrt(2)
+xc=5.0
+yc=5.0
+uInf=0.1
+vInf=0.0
+N = 32
+Nx = N+1
+dx = 10.0/N
+dt,nsteps = time_step_size(final_time,dx)
+xrange = range(0.0, stop = 10.0, length = Nx)
+
+xT = xc + final_time*uInf
+yT = yc
+
+sol0 = initial_condition(xrange,gamma)
+p0 = pressure(sol0,gamma)
+
+Ax = pade_dx_matrix(Nx)
+Ay = pade_dy_matrix(Nx)
+Rx = filter_dx_matrix(Nx,alpha)
+Ry = filter_dy_matrix(Nx,alpha)
+
+sol = run_steps(sol0,gamma,Nx,dx,dt,alpha,nsteps)
+p = pressure(sol,gamma)
+
+xxs = [x for x in xrange for y in xrange]
+yys = [y for x in xrange for y in xrange]
+X = reshape(xxs,Nx,Nx)
+Y = reshape(yys,Nx,Nx)
+fig, ax = PyPlot.subplots()
+ax.contour(X,Y,reshape(sol[1,:],Nx,Nx))
+fig
