@@ -1,5 +1,5 @@
 using LinearAlgebra, SparseArrays, BenchmarkTools
-using PyPlot
+using PyPlot, Statistics, Printf
 
 function pressure(sol::Vector,gamma)
     return (gamma-1.0)*(sol[4] - 0.5*(sol[2]^2+sol[3]^2)/sol[1])
@@ -50,28 +50,28 @@ function index_to_DOF(i::Int,j::Int,N::Int)
 end
 
 function front(k::Int,N::Int)
-    return k == N ? 1 : k+1
+    return k == N ? 2 : k+1
 end
 
 function front2(k::Int,N::Int)
     if k == N
-        return 2
+        return 3
     elseif k == N-1
-        return 1
+        return 2
     else
         return k+2
     end
 end
 
 function back(k::Int,N::Int)
-    return k == 1 ? N : k-1
+    return k == 1 ? N-1 : k-1
 end
 
 function back2(k::Int,N::Int)
     if k == 1
-        return N-1
+        return N-2
     elseif k == 2
-        return N
+        return N-1
     else
         return k-2
     end
@@ -119,7 +119,6 @@ function pade_dx_matrix(N::Int)
     I = Int[]
     J = Int[]
     vals = Float64[]
-    count = 1
     for j = 1:N
         for i = 1:N
             iplus = front(i,N)
@@ -127,10 +126,9 @@ function pade_dx_matrix(N::Int)
             F = index_to_DOF(iplus,j,N)
             B = index_to_DOF(iminus,j,N)
             C = index_to_DOF(i,j,N)
-            append!(I,[count,count,count])
+            append!(I,[C,C,C])
             append!(J,[B,C,F])
             append!(vals,[1.0,4.0,1.0])
-            count += 1
         end
     end
     return sparse(I,J,vals,N^2,N^2)
@@ -140,7 +138,6 @@ function pade_dy_matrix(N::Int)
     I = Int[]
     J = Int[]
     vals = Float64[]
-    count = 1
     for j = 1:N
         jplus = front(j,N)
         jminus = back(j,N)
@@ -148,10 +145,9 @@ function pade_dy_matrix(N::Int)
             F = index_to_DOF(i,jplus,N)
             B = index_to_DOF(i,jminus,N)
             C = index_to_DOF(i,j,N)
-            append!(I,[count,count,count])
+            append!(I,[C,C,C])
             append!(J,[B,C,F])
             append!(vals,[1.0,4.0,1.0])
-            count += 1
         end
     end
     return sparse(I,J,vals,N^2,N^2)
@@ -184,7 +180,7 @@ function filter_dx_matrix(N::Int,alpha::Float64)
             F = index_to_DOF(iplus,j,N)
             B = index_to_DOF(iminus,j,N)
             C = index_to_DOF(i,j,N)
-            append!(I,[count,count,count])
+            append!(I,[C,C,C])
             append!(J,[B,C,F])
             append!(vals,[alpha,1.0,alpha])
             count += 1
@@ -197,7 +193,6 @@ function filter_dy_matrix(N::Int,alpha::Float64)
     I = Int[]
     J = Int[]
     vals = Float64[]
-    count = 1
     for j = 1:N
         jplus = front(j,N)
         jminus = back(j,N)
@@ -205,10 +200,9 @@ function filter_dy_matrix(N::Int,alpha::Float64)
             F = index_to_DOF(i,jplus,N)
             B = index_to_DOF(i,jminus,N)
             C = index_to_DOF(i,j,N)
-            append!(I,[count,count,count])
+            append!(I,[C,C,C])
             append!(J,[B,C,F])
             append!(vals,[alpha,1.0,alpha])
-            count += 1
         end
     end
     return sparse(I,J,vals,N^2,N^2)
@@ -292,7 +286,7 @@ function stepRK4(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrix
     k2 = euler_rhs(sol+0.5*dt*k1,gamma,Ax,Ay,N,dx)
     k3 = euler_rhs(sol+0.5*dt*k2,gamma,Ax,Ay,N,dx)
     k4 = euler_rhs(sol+dt*k3,gamma,Ax,Ay,N,dx)
-    return sol+dt/6.0*(k1+k2+k3+k4)
+    return sol+dt/6.0*(k1+2.0*k2+2.0*k3+k4)
 end
 
 function step_and_filter(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,
@@ -311,6 +305,7 @@ function run_steps(sol0,gamma,N,dx,dt,alpha,nsteps)
 
     sol = copy(sol0)
     for i = 1:nsteps
+        # sol = stepRK4(sol,gamma,Ax,Ay,N,dx,dt)
         sol = step_and_filter(sol,gamma,Ax,Ay,Rx,Ry,N,dx,dt,alpha)
     end
     return sol
@@ -344,7 +339,7 @@ function total_energy(p,rho,u,v,gamma)
     return 1.0/(gamma-1.0)*p + 0.5*rho .* (u.^2 + v.^2)
 end
 
-function initial_condition(xrange,gamma,xc,yc;b=0.5,uInf=0.1,vInf=0.0)
+function initial_condition(xrange,gamma,xc,yc,uInf,vInf;b=0.5)
     N = length(xrange)
     ndofs = N^2
     density = zeros(ndofs)
@@ -389,6 +384,15 @@ function solution_error_infinity_norm(sol::Matrix,exact::Matrix)
     return [e1,e2,e3,e4]
 end
 
+function solution_error_L2_norm(sol::Matrix,exact::Matrix)
+    difference = sol - exact
+    e1 = norm(difference[1,:])
+    e2 = norm(difference[2,:])
+    e3 = norm(difference[3,:])
+    e4 = norm(difference[4,:])
+    return [e1,e2,e3,e4]
+end
+
 function plot_velocity_field(sol,Nx,xrange)
     xxs = [x for x in xrange for y in xrange]
     yys = [y for x in xrange for y in xrange]
@@ -400,31 +404,116 @@ function plot_velocity_field(sol,Nx,xrange)
     return fig
 end
 
-const gamma = 7.0/5.0
-const alpha = 0.499
-const final_time = 5*sqrt(2)
-xc=5.0
-yc=5.0
-uInf=0.1
-vInf=0.0
-N = [32,64,128]
-Nx = [i+1 for i in N]
-dx = 10.0 ./ N
-dt_nsteps = [time_step_size(final_time,h) for h in dx]
-xrange = [range(0.0, stop = 10.0, length = i) for i in Nx]
+function compact_pade(vals,Nx,dx)
+    Ax = pade_dx_matrix(Nx)
+    Ay = pade_dy_matrix(Nx)
+    rx = pade_dx_rhs(vals,Nx,dx)
+    ry = pade_dy_rhs(vals,Nx,dx)
+    return (Ax\rx, Ay\ry)
+end
 
-xT = xc + final_time*uInf
-yT = yc
+function pade_error(Nrange::Vector,grid_size,P,dPx,dPy)
+    Nxrange = Nrange .+ 1
+    dx = grid_size ./ Nrange
+    ex = zeros(length(Nxrange))
+    ey = zeros(length(Nxrange))
+    for (idx,Nx) in enumerate(Nxrange)
+        xrange = range(0.0, stop = 1.0, length = Nx)
+        vals = [P(x,y) for y in xrange for x in xrange]
+        dvx = [dPx(x,y) for y in xrange for x in xrange]
+        dvy = [dPy(x,y) for y in xrange for x in xrange]
+        vx, vy = compact_pade(vals,Nx,dx[idx])
+        ex[idx] = maximum(abs.(vx - dvx))
+        ey[idx] = maximum(abs.(vy - dvy))
+    end
+    return ex, ey, dx
+end
 
-sol0 = [initial_condition(xr,gamma,xc,yc) for xr in xrange]
-sol = [run_steps(sol0[i],gamma,Nx[i],dx[i],dt_nsteps[i][1],alpha,dt_nsteps[i][2]) for i in 1:3]
-exact = [initial_condition(xr,gamma,xT,yT) for xr in xrange]
-err = [solution_error_infinity_norm(sol[i],exact[i]) for i = 1:3]
+function mean_convergence_rate(err,dx)
+    rate = mean(diff(log.(err)) ./ diff(log.(dx)))
+    return rate
+end
 
-# xxs = [x for x in xrange for y in xrange]
-# yys = [y for x in xrange for y in xrange]
-# X = reshape(xxs,Nx,Nx)
-# Y = reshape(yys,Nx,Nx)
-# fig, ax = PyPlot.subplots()
-# ax.contour(X,Y,reshape(sol[1,:],Nx,Nx))
-# fig
+function test_pade_convergence()
+    P(x,y) = cos(2pi*x) + sin(2pi*y)
+    dPx(x,y) = -2pi*sin(2pi*x)
+    dPy(x,y) = 2pi*cos(2pi*y)
+    ex, ey, dx = pade_error([16,32,64,128], 1.0, P, dPx, dPy)
+    cx = mean_convergence_rate(ex, dx)
+    cy = mean_convergence_rate(ey, dx)
+    return cx, cy
+end
+
+function vortex_convergence_rate(Srange,alpha)
+    gamma = 7.0/5.0
+    final_time = 5*sqrt(2)
+    xc=5.0
+    yc=5.0
+    uInf=0.1
+    vInf=0.0
+    xT = xc + final_time*uInf
+    yT = yc
+    dxrange = 10.0 ./ Srange
+    err_range = zeros(4,length(Srange))
+    for (idx,S) in enumerate(Srange)
+        dx = dxrange[idx]
+        dt,nsteps = time_step_size(final_time,dx)
+        N = S+1
+        xrange = range(0.0, stop = 10.0, length = N)
+        sol0 = initial_condition(xrange,gamma,xc,yc,uInf,vInf)
+        sol = run_steps(sol0,gamma,N,dx,dt,alpha,nsteps)
+        exact = initial_condition(xrange,gamma,xT,yT,uInf,vInf)
+        err = solution_error_infinity_norm(sol,exact)
+        err_range[:,idx] = err
+    end
+    return err_range, dxrange
+end
+
+function plot_convergence(err,dx)
+    ρ = err[1,:]
+    ρu = err[2,:]
+    ρv = err[3,:]
+    ρE = err[4,:]
+    fig, ax = PyPlot.subplots(2,2)
+    ax[0,0].loglog
+end
+
+Srange = [32,64,128]
+alpha = 0.499
+err, dx = vortex_convergence_rate(Srange,alpha)
+
+fig, ax = PyPlot.subplots(2,2)
+ax[1,1].loglog(err[1,:],dx,"-o")
+ax[1,1].set_title(L"Convergence of $\rho$")
+ax[1,1].set_xlabel(L"step size $h$")
+ax[1,1].set_ylabel(L"L_\infty error")
+rate = mean_convergence_rate(err[1,:],dx)
+annotation = @sprintf "slope = %1.1f" rate
+ax[1,1].annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+
+ax[1,2].loglog(err[4,:],dx,"-o")
+ax[1,2].set_title(L"Convergence of $\rho E$")
+ax[1,2].set_xlabel(L"step size $h$")
+ax[1,2].set_ylabel(L"L_\infty error")
+rate = mean_convergence_rate(err[4,:],dx)
+annotation = @sprintf "slope = %1.1f" rate
+ax[1,2].annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+
+ax[2,1].loglog(err[2,:],dx,"-o")
+ax[2,1].set_title(L"Convergence of $\rho u$")
+ax[2,1].set_xlabel(L"step size $h$")
+ax[2,1].set_ylabel(L"L_\infty error")
+rate = mean_convergence_rate(err[2,:],dx)
+annotation = @sprintf "slope = %1.1f" rate
+ax[2,1].annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+
+ax[2,2].loglog(err[3,:],dx,"-o")
+ax[2,2].set_title(L"Convergence of $\rho v$")
+ax[2,2].set_xlabel(L"step size $h$")
+ax[2,2].set_ylabel(L"L_\infty error")
+rate = mean_convergence_rate(err[3,:],dx)
+annotation = @sprintf "slope = %1.1f" rate
+ax[2,2].annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+
+fig.tight_layout()
+fig.savefig("higher_alpha.png")
