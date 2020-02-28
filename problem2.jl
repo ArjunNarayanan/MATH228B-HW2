@@ -289,6 +289,27 @@ function stepRK4(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrix
     return sol+dt/6.0*(k1+2.0*k2+2.0*k3+k4)
 end
 
+function stepRK4_with_filter(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,
+        Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int,dx::Float64,dt::Float64,alpha::Float64)
+
+    k1 = euler_rhs(sol,gamma,Ax,Ay,N,dx)
+    k1 = filter_solution(k1,Rx,Ry,N,alpha)
+
+    k2 = euler_rhs(sol+0.5*dt*k1,gamma,Ax,Ay,N,dx)
+    k2 = filter_solution(k2,Rx,Ry,N,alpha)
+
+    k3 = euler_rhs(sol+0.5*dt*k2,gamma,Ax,Ay,N,dx)
+    k3 = filter_solution(k3,Rx,Ry,N,alpha)
+
+    k4 = euler_rhs(sol+dt*k3,gamma,Ax,Ay,N,dx)
+    k4 = filter_solution(k1,Rx,Ry,N,alpha)
+
+    next_step = sol+dt/6.0*(k1+2.0*k2+2.0*k3+k4)
+    next_step = filter_solution(next_step,Rx,Ry,N,alpha)
+
+    return next_step
+end
+
 function step_and_filter(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,
         Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int,dx::Float64,dt::Float64,alpha::Float64)
 
@@ -306,7 +327,8 @@ function run_steps(sol0,gamma,N,dx,dt,alpha,nsteps)
     sol = copy(sol0)
     for i = 1:nsteps
         # sol = stepRK4(sol,gamma,Ax,Ay,N,dx,dt)
-        sol = step_and_filter(sol,gamma,Ax,Ay,Rx,Ry,N,dx,dt,alpha)
+        # sol = step_and_filter(sol,gamma,Ax,Ay,Rx,Ry,N,dx,dt,alpha)
+        sol = stepRK4_with_filter(sol,gamma,Ax,Ay,Rx,Ry,N,dx,dt,alpha)
     end
     return sol
 end
@@ -479,7 +501,7 @@ function plot_convergence(err,dx)
 end
 
 Srange = [32,64,128]
-alpha = 0.499
+alpha = 0.48
 err, dx = vortex_convergence_rate(Srange,alpha)
 
 fig, ax = PyPlot.subplots(2,2)
