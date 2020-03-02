@@ -153,13 +153,13 @@ function pade_dy_matrix(N::Int)
     return sparse(I,J,vals,N^2,N^2)
 end
 
-function compact_divergence(Fx::Vector,Fy::Vector,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,N::Int,h::Float64)
+function compact_divergence(Fx::Vector,Fy::Vector,Ax,Ay,N::Int,h::Float64)
     rx = pade_dx_rhs(Fx,N,h)
     ry = pade_dy_rhs(Fy,N,h)
     return (Ax\rx + Ay\ry)
 end
 
-function euler_rhs(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,N::Int,h::Float64)
+function euler_rhs(sol::Matrix,gamma::Float64,Ax,Ay,N::Int,h::Float64)
     F1,F2,F3,F4 = flux(sol,gamma)
     DF1 = -1.0*compact_divergence(F1[1,:],F1[2,:],Ax,Ay,N,h)
     DF2 = -1.0*compact_divergence(F2[1,:],F2[2,:],Ax,Ay,N,h)
@@ -265,7 +265,7 @@ function filter_dy_rhs(vals::Vector,N::Int,alpha::Float64)
     return rhs
 end
 
-function compact_filter(F::Vector,Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int,alpha::Float64)
+function compact_filter(F::Vector,Rx,Ry,N::Int,alpha::Float64)
     rx = filter_dx_rhs(F,N,alpha)
     Fx = Rx\rx
     ry = filter_dy_rhs(Fx,N,alpha)
@@ -273,7 +273,7 @@ function compact_filter(F::Vector,Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int
     return Fy
 end
 
-function filter_solution(sol::Matrix,Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int,alpha::Float64)
+function filter_solution(sol::Matrix,Rx,Ry,N::Int,alpha::Float64)
     row1 = compact_filter(sol[1,:],Rx,Ry,N,alpha)
     row2 = compact_filter(sol[2,:],Rx,Ry,N,alpha)
     row3 = compact_filter(sol[3,:],Rx,Ry,N,alpha)
@@ -319,10 +319,10 @@ function step_and_filter(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::Spar
 end
 
 function run_steps(sol0,gamma,N,dx,dt,alpha,nsteps)
-    Ax = pade_dx_matrix(N)
-    Ay = pade_dy_matrix(N)
-    Rx = filter_dx_matrix(N,alpha)
-    Ry = filter_dy_matrix(N,alpha)
+    Ax = lu(pade_dx_matrix(N))
+    Ay = lu(pade_dy_matrix(N))
+    Rx = lu(filter_dx_matrix(N,alpha))
+    Ry = lu(filter_dy_matrix(N,alpha))
 
     sol = copy(sol0)
     for i = 1:nsteps
@@ -492,28 +492,32 @@ function vortex_convergence_rate(Srange,alpha)
 end
 
 function subplot_convergence(ax,dx,err,title)
-    ax.loglog(dx,err,"-o")
+    ax.loglog(dx,err,"-o",linewidth=2)
     ax.set_title(title)
     ax.set_xlabel(L"Step size $h$")
     ax.set_ylabel(L"L_\infty error")
     rate = mean_convergence_rate(err,dx)
-    annotation = @sprintf "slope = %1.1f" rate
+    annotation = @sprintf "mean slope = %1.1f" rate
     ax.annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
     ax.grid()
 end
 
-function plot_convergence(err,dx)
+function plot_convergence(err,dx;figsize=(8,8),filename = "")
     ρ = err[1,:]
     ρu = err[2,:]
     ρv = err[3,:]
     ρE = err[4,:]
-    fig, ax = PyPlot.subplots(2,2)
+    fig, ax = PyPlot.subplots(2,2,figsize=figsize)
     subplot_convergence(ax[1,1],dx,ρ,L"Convergence of $\rho$")
     subplot_convergence(ax[1,2],dx,ρE,L"Convergence of $\rho E$")
     subplot_convergence(ax[2,1],dx,ρu,L"Convergence of $\rho u$")
     subplot_convergence(ax[2,2],dx,ρv,L"Convergence of $\rho v$")
     fig.tight_layout()
-    return fig
+    if length(filename) > 0
+        fig.savefig(filename)
+    else
+        return fig
+    end
 end
 
 
@@ -525,7 +529,8 @@ uInf=0.1
 vInf=0.0
 xT = xc + final_time*uInf
 yT = yc
-S = 32
+S = 3
+alpha = 0.499
 
 dx = 10.0 / S
 dt,nsteps = time_step_size(final_time,dx)
@@ -533,16 +538,6 @@ N = S+1
 xrange = range(0.0, stop = 10.0, length = N)
 sol0 = initial_condition(xrange,gamma,xc,yc,uInf,vInf)
 
-Ax = pade_dx_matrix(N)
-Ay = pade_dy_matrix(N)
-Rx = filter_dx_matrix(N,alpha)
-Ry = filter_dy_matrix(N,alpha)
-
-sol = run_steps(sol0,gamma,N,dx,dt,alpha,nsteps)
-# exact = initial_condition(xrange,gamma,xT,yT,uInf,vInf)
-# err = solution_error_infinity_norm(sol,exact)
-
-# Srange = [32,64]
-# alpha = 0.48
-# err, dx = vortex_convergence_rate(Srange,alpha)
-# fig = plot_convergence(err,dx)
+Srange = [32,64,128]
+err, dx = vortex_convergence_rate(Srange,alpha)
+fig = plot_convergence(err,dx,filename = "high_alpha.png")
