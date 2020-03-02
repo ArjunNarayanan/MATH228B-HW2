@@ -289,8 +289,8 @@ function stepRK4(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrix
     return sol+dt/6.0*(k1+2.0*k2+2.0*k3+k4)
 end
 
-function stepRK4_with_filter(sol::Matrix,gamma::Float64,Ax::SparseMatrixCSC,Ay::SparseMatrixCSC,
-        Rx::SparseMatrixCSC,Ry::SparseMatrixCSC,N::Int,dx::Float64,dt::Float64,alpha::Float64)
+function stepRK4_with_filter(sol::Matrix,gamma::Float64,Ax,Ay,
+        Rx,Ry,N::Int,dx::Float64,dt::Float64,alpha::Float64)
 
     k1 = euler_rhs(sol,gamma,Ax,Ay,N,dx)
     k1 = filter_solution(k1,Rx,Ry,N,alpha)
@@ -491,51 +491,58 @@ function vortex_convergence_rate(Srange,alpha)
     return err_range, dxrange
 end
 
+function subplot_convergence(ax,dx,err,title)
+    ax.loglog(dx,err,"-o")
+    ax.set_title(title)
+    ax.set_xlabel(L"Step size $h$")
+    ax.set_ylabel(L"L_\infty error")
+    rate = mean_convergence_rate(err,dx)
+    annotation = @sprintf "slope = %1.1f" rate
+    ax.annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+    ax.grid()
+end
+
 function plot_convergence(err,dx)
     ρ = err[1,:]
     ρu = err[2,:]
     ρv = err[3,:]
     ρE = err[4,:]
     fig, ax = PyPlot.subplots(2,2)
-    ax[0,0].loglog
+    subplot_convergence(ax[1,1],dx,ρ,L"Convergence of $\rho$")
+    subplot_convergence(ax[1,2],dx,ρE,L"Convergence of $\rho E$")
+    subplot_convergence(ax[2,1],dx,ρu,L"Convergence of $\rho u$")
+    subplot_convergence(ax[2,2],dx,ρv,L"Convergence of $\rho v$")
+    fig.tight_layout()
+    return fig
 end
 
-Srange = [32,64,128]
-alpha = 0.48
-err, dx = vortex_convergence_rate(Srange,alpha)
 
-fig, ax = PyPlot.subplots(2,2)
-ax[1,1].loglog(err[1,:],dx,"-o")
-ax[1,1].set_title(L"Convergence of $\rho$")
-ax[1,1].set_xlabel(L"step size $h$")
-ax[1,1].set_ylabel(L"L_\infty error")
-rate = mean_convergence_rate(err[1,:],dx)
-annotation = @sprintf "slope = %1.1f" rate
-ax[1,1].annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+gamma = 7.0/5.0
+final_time = 5*sqrt(2)
+xc=5.0
+yc=5.0
+uInf=0.1
+vInf=0.0
+xT = xc + final_time*uInf
+yT = yc
+S = 32
 
-ax[1,2].loglog(err[4,:],dx,"-o")
-ax[1,2].set_title(L"Convergence of $\rho E$")
-ax[1,2].set_xlabel(L"step size $h$")
-ax[1,2].set_ylabel(L"L_\infty error")
-rate = mean_convergence_rate(err[4,:],dx)
-annotation = @sprintf "slope = %1.1f" rate
-ax[1,2].annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+dx = 10.0 / S
+dt,nsteps = time_step_size(final_time,dx)
+N = S+1
+xrange = range(0.0, stop = 10.0, length = N)
+sol0 = initial_condition(xrange,gamma,xc,yc,uInf,vInf)
 
-ax[2,1].loglog(err[2,:],dx,"-o")
-ax[2,1].set_title(L"Convergence of $\rho u$")
-ax[2,1].set_xlabel(L"step size $h$")
-ax[2,1].set_ylabel(L"L_\infty error")
-rate = mean_convergence_rate(err[2,:],dx)
-annotation = @sprintf "slope = %1.1f" rate
-ax[2,1].annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+Ax = pade_dx_matrix(N)
+Ay = pade_dy_matrix(N)
+Rx = filter_dx_matrix(N,alpha)
+Ry = filter_dy_matrix(N,alpha)
 
-ax[2,2].loglog(err[3,:],dx,"-o")
-ax[2,2].set_title(L"Convergence of $\rho v$")
-ax[2,2].set_xlabel(L"step size $h$")
-ax[2,2].set_ylabel(L"L_\infty error")
-rate = mean_convergence_rate(err[3,:],dx)
-annotation = @sprintf "slope = %1.1f" rate
-ax[2,2].annotate(annotation, (0.5, 0.2), xycoords = "axes fraction")
+sol = run_steps(sol0,gamma,N,dx,dt,alpha,nsteps)
+# exact = initial_condition(xrange,gamma,xT,yT,uInf,vInf)
+# err = solution_error_infinity_norm(sol,exact)
 
-fig.tight_layout()
-fig.savefig("higher_alpha.png")
+# Srange = [32,64]
+# alpha = 0.48
+# err, dx = vortex_convergence_rate(Srange,alpha)
+# fig = plot_convergence(err,dx)
