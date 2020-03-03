@@ -285,16 +285,16 @@ function stepRK4_with_filter(sol::Matrix,gamma::Float64,Ax,Ay,
         Rx,Ry,N::Int,dx::Float64,dt::Float64,alpha::Float64)
 
     k1 = euler_rhs(sol,gamma,Ax,Ay,N,dx)
-    k1 = filter_solution(k1,Rx,Ry,N,alpha)
+    # k1 = filter_solution(k1,Rx,Ry,N,alpha)
 
     k2 = euler_rhs(sol+0.5*dt*k1,gamma,Ax,Ay,N,dx)
-    k2 = filter_solution(k2,Rx,Ry,N,alpha)
+    # k2 = filter_solution(k2,Rx,Ry,N,alpha)
 
     k3 = euler_rhs(sol+0.5*dt*k2,gamma,Ax,Ay,N,dx)
-    k3 = filter_solution(k3,Rx,Ry,N,alpha)
+    # k3 = filter_solution(k3,Rx,Ry,N,alpha)
 
     k4 = euler_rhs(sol+dt*k3,gamma,Ax,Ay,N,dx)
-    k4 = filter_solution(k1,Rx,Ry,N,alpha)
+    # k4 = filter_solution(k1,Rx,Ry,N,alpha)
 
     next_step = sol+dt/6.0*(k1+2.0*k2+2.0*k3+k4)
     next_step = filter_solution(next_step,Rx,Ry,N,alpha)
@@ -315,6 +315,27 @@ function run_steps(sol0,gamma,N,dx,dt,alpha,nsteps)
     return sol
 end
 
+function run_steps_with_checkpoints(sol0,gamma,N,dx,dt,alpha,nsteps;checkpointAt=10)
+    Ax = lu(pade_dx_matrix(N))
+    Ay = lu(pade_dy_matrix(N))
+    Rx = lu(filter_dx_matrix(N,alpha))
+    Ry = lu(filter_dy_matrix(N,alpha))
+
+    sol = copy(sol0)
+    time_series = Array{Matrix{Float64}}(undef, 0)
+    push!(time_series,sol0)
+    for i = 1:nsteps
+        sol = stepRK4_with_filter(sol,gamma,Ax,Ay,Rx,Ry,N,dx,dt,alpha)
+        if i%checkpointAt == 0
+            push!(time_series,sol)
+        end
+    end
+    if nsteps%checkpointAt != 0
+        push!(time_series,sol)
+    end
+    return time_series
+end
+
 function time_step_size(final_time::Float64,dx::Float64;step_factor=0.3)
     nsteps = 2
     dt = final_time/nsteps
@@ -325,14 +346,14 @@ function time_step_size(final_time::Float64,dx::Float64;step_factor=0.3)
     return dt, nsteps
 end
 
-function vortex_initial_velocity(uInf,vInf,r,x,y,xc,yc,b)
-    u = uInf - b/(2pi)*exp(0.5*(1.0-r^2))*(y-yc)
-    v = vInf + b/(2pi)*exp(0.5*(1.0-r^2))*(x-xc)
+function vortex_initial_velocity(uInf,vInf,rsquared,x,y,xc,yc,b)
+    u = uInf - b/(2pi)*exp(0.5*(1.0-rsquared))*(y-yc)
+    v = vInf + b/(2pi)*exp(0.5*(1.0-rsquared))*(x-xc)
     return u,v
 end
 
-function vortex_initial_density(gamma,r,b)
-    return (1.0 - (gamma - 1.0)*b^2/(8*gamma*pi^2)*exp(1.0-r^2))^(1.0/(gamma-1.0))
+function vortex_initial_density(gamma,rsquared,b)
+    return (1.0 - (gamma - 1.0)*b^2/(8*gamma*pi^2)*exp(1.0-rsquared))^(1.0/(gamma-1.0))
 end
 
 function kelvin_helmholtz_initial_density(x,y)
@@ -365,11 +386,11 @@ function vortex_initial_condition(xrange,gamma,xc,yc,uInf,vInf;b=0.5)
             idx = index_to_DOF(i,j,N)
 
             x = xrange[i]
-            r = sqrt((x-xc)^2 + (y-yc)^2)
+            rsquared = (x-xc)^2 + (y-yc)^2
 
-            rho = vortex_initial_density(gamma,r,b)
+            rho = vortex_initial_density(gamma,rsquared,b)
             p = vortex_initial_pressure(rho,gamma)
-            u,v = vortex_initial_velocity(uInf,vInf,r,x,y,xc,yc,b)
+            u,v = vortex_initial_velocity(uInf,vInf,rsquared,x,y,xc,yc,b)
 
             density[idx] = rho
             xVelocity[idx] = u
@@ -535,14 +556,27 @@ function plot_convergence(err,dx;figsize=(8,8),filename = "")
     end
 end
 
-function plot_density(rho,xrange)
+function plot_density(rho,xrange;crange=0.6:0.2:3,cmap="inferno",filename="")
     N = length(xrange)
     xxs = reshape([x for x in xrange for y in xrange], N, N)
     yys = reshape([y for x in xrange for y in xrange], N, N)
     fig, ax = PyPlot.subplots()
-    cbar = ax.contourf(xxs,yys,reshape(rho,N,N)')
+    cbar = ax.contourf(xxs,yys,reshape(rho,N,N)',crange,cmap=cmap)
     fig.colorbar(cbar)
-    return fig
+    if length(filename) > 0
+        fig.savefig(filename)
+    else
+        return fig
+    end
+end
+
+function save_movie(time_series,xrange,component,foldername,prefix)
+    nframes = length(time_series)
+    padsize = floor(Int,log10(nframes))+1
+    for i in 1:nframes
+        filename = foldername*"/"*prefix*"_"*lpad(i,padsize,"0")*".png"
+        plot_density(time_series[i][component,:],xrange,filename=filename)
+    end
 end
 
 gamma = 7.0/5.0
@@ -556,23 +590,27 @@ uInf=0.1
 vInf=0.0
 xT = xc + final_time*uInf
 yT = yc
-S = 128
+S = 64
 alpha = 0.48
 
-dx = 10.0 / S
+dx = 1.0 / S
 dt,nsteps = time_step_size(final_time,dx)
 N = S+1
 
-xrange = range(0.0, stop = 10.0, length = N)
-sol0 = vortex_initial_condition(xrange,gamma,xc,yc,uInf,vInf)
-plot_density(sol0[1,:], xrange)
 
-# xrange = range(0.0, stop = 1.0, length = N)
-# sol0 = kelvin_helmholtz_initial_condition(xrange)
-# #
-# sol = run_steps(sol0,gamma,N,dx,dt,alpha,10)
-# #
-# plot_density(sol[1,:],xrange)
+# xrange = range(0.0, stop = 10.0, length = N)
+# sol0 = vortex_initial_condition(xrange,gamma,xc,yc,uInf,vInf)
+# plot_density(sol0[1,:], xrange)
+
 # Srange = [16,32,64]
 # err, dx = vortex_convergence_rate(Srange,alpha)
 # fig = plot_convergence(err,dx)
+
+xrange = range(0.0, stop = 1.0, length = N)
+sol0 = kelvin_helmholtz_initial_condition(xrange)
+# plot_density(sol0[1,:],xrange,cmap="magma")
+#
+time_series = run_steps_with_checkpoints(sol0,gamma,N,dx,dt,alpha,nsteps)
+# time_series2 = run_steps_with_checkpoints(time_series[end],gamma,N,dx,dt,alpha,1000)
+save_movie(time_series,xrange,1,"figures/64","density")
+# plot_density(time_series[end][1,:],xrange,cmap="magma")
