@@ -563,8 +563,9 @@ dx = 10.0 / S
 dt,nsteps = time_step_size(final_time,dx)
 N = S+1
 
-# xrange = range(0.0, stop = 10.0, length = N)
-# sol0 = vortex_initial_condition(xrange,gamma,xc,yc,uInf,vInf)
+xrange = range(0.0, stop = 10.0, length = N)
+sol0 = vortex_initial_condition(xrange,gamma,xc,yc,uInf,vInf)
+plot_density(sol0[1,:], xrange)
 
 # xrange = range(0.0, stop = 1.0, length = N)
 # sol0 = kelvin_helmholtz_initial_condition(xrange)
@@ -572,6 +573,6 @@ N = S+1
 # sol = run_steps(sol0,gamma,N,dx,dt,alpha,10)
 # #
 # plot_density(sol[1,:],xrange)
-Srange = [16,32,64]
-err, dx = vortex_convergence_rate(Srange,alpha)
-fig = plot_convergence(err,dx)
+# Srange = [16,32,64]
+# err, dx = vortex_convergence_rate(Srange,alpha)
+# fig = plot_convergence(err,dx)
